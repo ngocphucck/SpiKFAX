@@ -1,0 +1,3 @@
+CUDA_VISIBLE_DEVICES=1 python plot_surface.py --mpi --cuda --model vgg11_spike --x=-1:1:51 --y=-1:1:51 --model_file cifar10/trained_nets/spike/model_10.t7 --dir_type weights --xnorm filter --xignore biasbn --ynorm filter --yignore biasbn --plot --dataset cifar10_spike
+
+python h52vtp.py --surf_file loss-landscape/cifar10/trained_nets/spike/model_10.t7_weights_xignore=biasbn_xnorm=filter_yignore=biasbn_ynorm=filter.h5_[-1.0,1.0,51]x[-1.0,1.0,51].h5 --surf_name train_loss --zmax  10 --log
