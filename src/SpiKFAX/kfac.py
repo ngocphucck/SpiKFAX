@@ -7,7 +7,7 @@ import torch.nn.functional as Fnn
 from torch.optim import Optimizer
 
 
-class SpikeFAC(Optimizer):
+class SpiKFAX(Optimizer):
     """
     K-FAC-style natural gradient optimizer for SpikeLinear and SpikeConv2d layers,
     with explicit handling for BatchNorm2d scale/shift parameters and biases.
@@ -111,6 +111,27 @@ class SpikeFAC(Optimizer):
             "layers, not model.parameters()."
         )
 
+    @staticmethod
+    def _factored_damping(A, G, damping, eps):
+ 
+        m, n = A.shape[0], G.shape[0]
+        trace_a = torch.trace(A).clamp(min=1e-12) / m
+        trace_g = torch.trace(G).clamp(min=1e-12) / n
+        pi = torch.sqrt(trace_a / trace_g)
+
+        sqrt_term = damping ** 0.5
+        A_d = (
+            A
+            + pi * sqrt_term * torch.eye(m, device=A.device, dtype=A.dtype)
+            + eps * torch.eye(m, device=A.device, dtype=A.dtype)
+        )
+        G_d = (
+            G
+            + (1.0 / pi) * sqrt_term * torch.eye(n, device=G.device, dtype=G.dtype)
+            + eps * torch.eye(n, device=G.device, dtype=G.dtype)
+        )
+        return A_d, G_d
+
     @torch.no_grad()
     def step(self, closure=None):
         loss = None
@@ -184,14 +205,8 @@ class SpikeFAC(Optimizer):
                                 state["A_ema"].mul_(stat_decay).add_(A_batch, alpha=1 - stat_decay)
                                 state["G_ema"].mul_(stat_decay).add_(G_batch, alpha=1 - stat_decay)
 
-                            k_dim = state["A_ema"].shape[0]
-                            out_dim = state["G_ema"].shape[0]
-                            A_d = state["A_ema"] + (damping + eps) * torch.eye(
-                                k_dim, device=A_batch.device, dtype=A_batch.dtype
-                            )
-                            G_d = state["G_ema"] + (damping + eps) * torch.eye(
-                                out_dim, device=G_batch.device, dtype=G_batch.dtype
-                            )
+                            # --- Remark 1: factored, pi-rescaled damping (was: naive shared (damping+eps)*I) ---
+                            A_d, G_d = self._factored_damping(state["A_ema"], state["G_ema"], damping, eps)
                             state["A_inv"] = torch.linalg.inv(A_d)
                             state["G_inv"] = torch.linalg.inv(G_d)
 
@@ -231,14 +246,8 @@ class SpikeFAC(Optimizer):
                                 state["A_ema"].mul_(stat_decay).add_(A_batch, alpha=1 - stat_decay)
                                 state["G_ema"].mul_(stat_decay).add_(G_batch, alpha=1 - stat_decay)
 
-                            in_dim = state["A_ema"].shape[0]
-                            out_dim = state["G_ema"].shape[0]
-                            A_d = state["A_ema"] + (damping + eps) * torch.eye(
-                                in_dim, device=A_batch.device, dtype=A_batch.dtype
-                            )
-                            G_d = state["G_ema"] + (damping + eps) * torch.eye(
-                                out_dim, device=G_batch.device, dtype=G_batch.dtype
-                            )
+                            # --- Remark 1: factored, pi-rescaled damping (was: naive shared (damping+eps)*I) ---
+                            A_d, G_d = self._factored_damping(state["A_ema"], state["G_ema"], damping, eps)
                             state["A_inv"] = torch.linalg.inv(A_d)
                             state["G_inv"] = torch.linalg.inv(G_d)
 
@@ -392,12 +401,10 @@ class SpikeFAC(Optimizer):
                     state["G_ema2"].mul_(stat_decay).add_(G, alpha=1 - stat_decay)
                     state["G_diag_ema"].mul_(stat_decay).add_(G_diag, alpha=1 - stat_decay)
 
-                in_dim = state["Sigma_x_ema"].shape[0]
-                out_dim = state["G_ema2"].shape[0]
                 dev, dt = grad.device, grad.dtype
 
-                Sigma_x_d = state["Sigma_x_ema"] + (damping + eps) * torch.eye(in_dim, device=dev, dtype=dt)
-                G_diag_d = state["G_diag_ema"] + (damping + eps) * torch.eye(out_dim, device=dev, dtype=dt)
+                Sigma_x_d, G_diag_d = self._factored_damping(state["Sigma_x_ema"], state["G_diag_ema"], damping, eps)
+                out_dim = state["G_ema2"].shape[0]
                 G_d = state["G_ema2"] + (damping + eps) * torch.eye(out_dim, device=dev, dtype=dt)
 
                 V = state["x_bar_ema"].t()
